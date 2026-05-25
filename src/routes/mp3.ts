@@ -21,17 +21,39 @@ router.get("/", async (_req: Request, res: Response) => {
   }
 });
 
-// GET /mp3/download/:filename — download an MP3 file
+// GET /mp3/download/:filename — download/stream an MP3 file (range request supported)
 router.get("/download/:filename", async (req: Request, res: Response) => {
   try {
     const folder = getMp3Folder();
     const filePath = `${folder}/${req.params.filename}`;
     const { buffer, name } = await downloadMp3(filePath);
 
+    const totalSize = buffer.length;
+    const rangeHeader = req.headers.range;
+
+    if (rangeHeader) {
+      const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
+      if (match) {
+        const start = parseInt(match[1], 10);
+        const end = match[2] ? parseInt(match[2], 10) : totalSize - 1;
+        const chunkSize = end - start + 1;
+
+        res.status(206);
+        res.set({
+          "Content-Type": "audio/mpeg",
+          "Content-Range": `bytes ${start}-${end}/${totalSize}`,
+          "Content-Length": chunkSize.toString(),
+          "Accept-Ranges": "bytes",
+        });
+        return res.send(buffer.subarray(start, end + 1));
+      }
+    }
+
     res.set({
       "Content-Type": "audio/mpeg",
-      "Content-Disposition": `attachment; filename="${name}"`,
-      "Content-Length": buffer.length.toString(),
+      "Content-Disposition": `inline; filename="${name}"`,
+      "Content-Length": totalSize.toString(),
+      "Accept-Ranges": "bytes",
     });
     res.send(buffer);
   } catch (err: any) {

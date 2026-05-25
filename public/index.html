@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>drop-audio</title>
+<script src="https://cdn.jsdelivr.net/npm/wavesurfer.js@7/dist/wavesurfer.esm.js" type="module"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0d1117;color:#e6edf3;max-width:900px;margin:0 auto;padding:20px}
+h1{font-size:1.6rem;margin-bottom:8px;color:#58a6ff}
+.sub{color:#8b949e;margin-bottom:24px;font-size:0.9rem}
+.loading{color:#8b949e;text-align:center;padding:40px}
+.error{color:#f85149;padding:12px;background:#2d1117;border-radius:8px;margin-bottom:16px}
+#player{margin-bottom:24px;display:none}
+#player.active{display:block}
+#waveform{background:#161b22;border-radius:8px;overflow:hidden;margin-bottom:12px;min-height:128px}
+.controls{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+.controls button{background:#238636;color:#fff;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;font-size:0.95rem}
+.controls button:hover{background:#2ea043}
+.controls button.pause{background:#1f6feb}
+.controls button.pause:hover{background:#388bfd}
+.controls .time{font-size:0.85rem;color:#8b949e;font-variant-numeric:tabular-nums}
+.file-info{font-size:0.85rem;color:#8b949e;margin-bottom:4px}
+#filelist{list-style:none}
+#filelist li{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-radius:6px;cursor:pointer;transition:background 0.15s}
+#filelist li:hover{background:#161b22}
+#filelist li.active{background:#1f2937;border:1px solid #30363d}
+#filelist li .name{flex:1;font-size:0.95rem}
+#filelist li .meta{font-size:0.8rem;color:#8b949e}
+.upload-area{margin-top:24px;padding:20px;border:2px dashed #30363d;border-radius:8px;text-align:center;color:#8b949e;cursor:pointer;transition:border-color 0.2s}
+.upload-area:hover{border-color:#58a6ff}
+.upload-area.dragover{border-color:#2ea043;background:#132a1a}
+.upload-area input{display:none}
+</style>
+</head>
+<body>
+
+<h1>drop-audio</h1>
+<div class="sub">MP3 プレイヤー（Dropbox / ローカルサンプル）</div>
+
+<div id="player">
+  <div class="file-info" id="nowplaying"></div>
+  <div id="waveform"></div>
+  <div class="controls">
+    <button id="playbtn">▶ 再生</button>
+    <span class="time" id="time">0:00 / 0:00</span>
+  </div>
+</div>
+
+<div id="filelist"></div>
+<div class="upload-area" id="uploadArea">
+  <p>+ MP3 をアップロード（クリックまたはドラッグ＆ドロップ）</p>
+  <input type="file" id="fileInput" accept=".mp3,audio/mpeg">
+</div>
+
+<script type="module">
+import WaveSurfer from 'https://cdn.jsdelivr.net/npm/wavesurfer.js@7/dist/wavesurfer.esm.js'
+
+const filelistEl = document.getElementById('filelist')
+const playerEl = document.getElementById('player')
+const nowplayingEl = document.getElementById('nowplaying')
+const waveformEl = document.getElementById('waveform')
+const playbtn = document.getElementById('playbtn')
+const timeEl = document.getElementById('time')
+const uploadArea = document.getElementById('uploadArea')
+const fileInput = document.getElementById('fileInput')
+
+let ws = null
+let currentFile = null
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / 1048576).toFixed(1) + ' MB'
+}
+
+function formatTime(seconds) {
+  const m = Math.floor(seconds / 60)
+  const s = Math.floor(seconds % 60)
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
+
+async function loadFileList() {
+  filelistEl.innerHTML = '<div class="loading">Loading...</div>'
+  // Fetch both Dropbox files and local samples
+  const [mp3Res, samplesRes] = await Promise.allSettled([
+    fetch('/mp3'),
+    fetch('/samples'),
+  ])
+
+  let dropboxFiles = []
+  let localSamples = []
+
+  if (mp3Res.status === 'fulfilled' && mp3Res.value.ok) {
+    const data = await mp3Res.value.json()
+    dropboxFiles = data.files.map(f => ({ ...f, source: 'dropbox' }))
+  }
+  if (samplesRes.status === 'fulfilled' && samplesRes.value.ok) {
+    const data = await samplesRes.value.json()
+    localSamples = data.files.map(f => ({ ...f, source: 'local' }))
+  }
+
+  const allFiles = [...dropboxFiles, ...localSamples]
+  if (allFiles.length === 0) {
+    filelistEl.innerHTML = '<div class="loading" style="padding:20px">No MP3 files found.</div>'
+    return
+  }
+  renderFileList(allFiles)
+}
+
+function renderFileList(files) {
+  filelistEl.innerHTML = ''
+  for (const f of files) {
+    const li = document.createElement('li')
+    li.dataset.name = f.name
+    li.dataset.source = f.source
+    if (currentFile && currentFile.name === f.name && currentFile.source === f.source) li.classList.add('active')
+
+    const nameSpan = document.createElement('span')
+    nameSpan.className = 'name'
+    nameSpan.textContent = f.name
+    const metaSpan = document.createElement('span')
+    metaSpan.className = 'meta'
+    metaSpan.textContent = (f.source === 'local' ? '📁 ' : '☁️ ') + formatSize(f.size)
+
+    li.appendChild(nameSpan)
+    li.appendChild(metaSpan)
+    li.addEventListener('click', () => playFile(f))
+    filelistEl.appendChild(li)
+  }
+}
+
+async function playFile(file) {
+  currentFile = file
+  playerEl.classList.add('active')
+  nowplayingEl.textContent = file.name
+
+  // highlight active
+  document.querySelectorAll('#filelist li').forEach(li => {
+    li.classList.toggle('active', li.dataset.name === file.name && li.dataset.source === file.source)
+  })
+
+  const url = file.source === 'local'
+    ? `/samples/${encodeURIComponent(file.name)}`
+    : `/mp3/download/${encodeURIComponent(file.name)}`
+
+  if (ws) {
+    ws.destroy()
+    ws = null
+  }
+
+  ws = WaveSurfer.create({
+    container: waveformEl,
+    waveColor: '#58a6ff',
+    progressColor: '#1f6feb',
+    cursorColor: '#f0883e',
+    barWidth: 2,
+    barGap: 1,
+    height: 128,
+    normalize: true,
+  })
+
+  ws.load(url)
+
+  ws.on('ready', () => {
+    playbtn.textContent = '⏸ 一時停止'
+    playbtn.className = 'pause'
+  })
+
+  ws.on('timeupdate', (current) => {
+    const total = ws.getDuration()
+    timeEl.textContent = `${formatTime(current)} / ${formatTime(total)}`
+  })
+
+  ws.on('finish', () => {
+    playbtn.textContent = '▶ 再生'
+    playbtn.className = ''
+  })
+
+  ws.on('play', () => {
+    playbtn.textContent = '⏸ 一時停止'
+    playbtn.className = 'pause'
+  })
+
+  ws.on('pause', () => {
+    playbtn.textContent = '▶ 再生'
+    playbtn.className = ''
+  })
+}
+
+playbtn.addEventListener('click', () => {
+  if (!ws) return
+  if (ws.isPlaying()) {
+    ws.pause()
+  } else {
+    ws.play()
+  }
+})
+
+// Upload
+uploadArea.addEventListener('click', () => fileInput.click())
+uploadArea.addEventListener('dragover', (e) => {
+  e.preventDefault()
+  uploadArea.classList.add('dragover')
+})
+uploadArea.addEventListener('dragleave', () => {
+  uploadArea.classList.remove('dragover')
+})
+uploadArea.addEventListener('drop', (e) => {
+  e.preventDefault()
+  uploadArea.classList.remove('dragover')
+  const file = e.dataTransfer.files[0]
+  if (file) uploadFile(file)
+})
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) uploadFile(fileInput.files[0])
+})
+
+async function uploadFile(file) {
+  if (!file.name.toLowerCase().endsWith('.mp3')) {
+    alert('Only MP3 files are allowed.')
+    return
+  }
+  const formData = new FormData()
+  formData.append('file', file)
+  try {
+    const res = await fetch('/mp3/upload', { method: 'POST', body: formData })
+    if (!res.ok) throw new Error(await res.text())
+    await loadFileList()
+    // auto-play uploaded file
+    const mp3Res = await fetch('/mp3')
+    if (mp3Res.ok) {
+      const { files } = await mp3Res.json()
+      const uploaded = files.find(f => f.name === file.name)
+      if (uploaded) playFile({ ...uploaded, source: 'dropbox' })
+    }
+  } catch (err) {
+    alert('Upload failed: ' + err.message)
+  }
+}
+
+loadFileList()
+</script>
+</body>
+</html>
