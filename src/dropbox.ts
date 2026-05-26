@@ -2,10 +2,9 @@ import { Dropbox, DropboxAuth } from "dropbox";
 import fs from "fs";
 
 let dbx: Dropbox | null = null;
-let dropboxAvailable = false;
 
 export function isDropboxAvailable(): boolean {
-  return dropboxAvailable;
+  return !!process.env.DROPBOX_ACCESS_TOKEN;
 }
 
 export function getDropboxClient(): Dropbox {
@@ -13,14 +12,12 @@ export function getDropboxClient(): Dropbox {
 
   const accessToken = process.env.DROPBOX_ACCESS_TOKEN;
   if (!accessToken) {
-    dropboxAvailable = false;
     throw new Error(
       "DROPBOX_ACCESS_TOKEN is not set in environment variables"
     );
   }
 
   dbx = new Dropbox({ accessToken });
-  dropboxAvailable = true;
   return dbx;
 }
 
