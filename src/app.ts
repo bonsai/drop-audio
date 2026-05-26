@@ -2,9 +2,10 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import path from "path";
-import express from "express";
 import fs from "fs";
+import express from "express";
 import mp3Router from "./routes/mp3";
+import { generateWaveform } from "./waveform";
 
 const app = express();
 
@@ -25,6 +26,20 @@ app.get("/samples", (_req, res) => {
     res.json({ files: samples });
   } catch {
     res.json({ files: [] });
+  }
+});
+
+// Waveform data for local samples
+app.get("/samples/waveform/:filename", async (req, res) => {
+  try {
+    const filePath = path.join(process.cwd(), "public", "samples", req.params.filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "File not found" });
+    }
+    const waveform = await generateWaveform(filePath);
+    res.json(waveform);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 

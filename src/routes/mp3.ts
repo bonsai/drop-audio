@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import multer from "multer";
-import { listMp3s, downloadMp3, uploadMp3 } from "../dropbox";
+import { isDropboxAvailable, listMp3s, downloadMp3, uploadMp3 } from "../dropbox";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -11,6 +11,9 @@ function getMp3Folder(): string {
 
 // GET /mp3 — list all MP3 files
 router.get("/", async (_req: Request, res: Response) => {
+  if (!isDropboxAvailable()) {
+    return res.json({ files: [], note: "Dropbox not configured. Set DROPBOX_ACCESS_TOKEN to enable." });
+  }
   try {
     const folder = getMp3Folder();
     const files = await listMp3s(folder);
@@ -23,6 +26,9 @@ router.get("/", async (_req: Request, res: Response) => {
 
 // GET /mp3/download/:filename — download/stream an MP3 file (range request supported)
 router.get("/download/:filename", async (req: Request, res: Response) => {
+  if (!isDropboxAvailable()) {
+    return res.status(503).json({ error: "Dropbox not configured" });
+  }
   try {
     const folder = getMp3Folder();
     const filePath = `${folder}/${req.params.filename}`;
@@ -71,6 +77,9 @@ router.post(
   "/upload",
   upload.single("file"),
   async (req: Request, res: Response) => {
+    if (!isDropboxAvailable()) {
+      return res.status(503).json({ error: "Dropbox not configured" });
+    }
     try {
       if (!req.file) {
         return res.status(400).json({ error: "No file provided" });
