@@ -1,6 +1,4 @@
 import { spawn } from "child_process";
-import { parseFile } from "music-metadata";
-import path from "path";
 
 const PEAK_COUNT = 400;
 
@@ -14,55 +12,56 @@ export interface WaveformData {
 export async function generateWaveform(
   filePath: string
 ): Promise<WaveformData> {
-  // Get metadata first
-  const metadata = await parseFile(filePath);
-  const duration = metadata.format.duration || 0;
-  const sampleRate = metadata.format.sampleRate || 44100;
-  const channels = metadata.format.numberOfChannels || 2;
-
-  // Try ffmpeg to decode and extract peak data
+  // Try ffmpeg first — it gives us everything
   try {
-    const peaks = await decodeWithFfmpeg(filePath, duration);
-    return { duration, peaks, sampleRate, channels };
+    return await decodeWithFfmpeg(filePath);
   } catch {
-    // ffmpeg not available — generate placeholder peaks
+    // ffmpeg not available — placeholder
     return {
-      duration,
-      peaks: generatePlaceholderPeaks(duration),
-      sampleRate,
-      channels,
+      duration: 0,
+      peaks: new Array(PEAK_COUNT).fill(0.5),
+      sampleRate: 44100,
+      channels: 2,
     };
   }
 }
 
-function decodeWithFfmpeg(filePath: string, duration: number): Promise<number[]> {
+function decodeWithFfmpeg(filePath: string): Promise<WaveformData> {
   return new Promise((resolve, reject) => {
-    // Decode to mono 16-bit PCM, output raw samples
-    const samplesPerPeak = Math.max(1, Math.floor((duration * 44100) / PEAK_COUNT));
+    // Spawn ffmpeg to decode audio to raw PCM and also probe duration
     const ff = spawn("ffmpeg", [
       "-i", filePath,
-      "-f", "s16le",       // 16-bit signed little-endian PCM
+      "-f", "s16le",
       "-acodec", "pcm_s16le",
-      "-ac", "1",           // mono
-      "-ar", "44100",       // 44.1kHz
+      "-ac", "1",
+      "-ar", "44100",
       "-vn",
       "-loglevel", "error",
       "pipe:1",
     ]);
 
     const chunks: Buffer[] = [];
+    let stderr = "";
+
     ff.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
-    ff.stderr.on("data", () => {}); // swallow stderr
+    ff.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
     ff.on("error", (err) => reject(err));
     ff.on("close", (code) => {
       if (code !== 0) {
-        return reject(new Error(`ffmpeg exited with code ${code}`));
+        return reject(new Error(`ffmpeg exited with code ${code}: ${stderr}`));
       }
 
       const raw = Buffer.concat(chunks);
-      // 16-bit samples -> Float32
       const sampleCount = Math.floor(raw.length / 2);
-      const peaks: number[] = [];
+      if (sampleCount === 0) {
+        return reject(new Error("No audio data decoded"));
+      }
+
+      const duration = sampleCount / 44100;
+      const samplesPerPeak = Math.max(1, Math.floor(sampleCount / PEAK_COUNT));
+
+      // Compute peaks
+      const rawPeaks: number[] = [];
       let maxInWindow = 0;
       let counter = 0;
 
@@ -73,42 +72,42 @@ function decodeWithFfmpeg(filePath: string, duration: number): Promise<number[]>
 
         counter++;
         if (counter >= samplesPerPeak) {
-          peaks.push(maxInWindow);
+          rawPeaks.push(maxInWindow);
           maxInWindow = 0;
           counter = 0;
         }
       }
-      // Flush last window
-      if (counter > 0) peaks.push(maxInWindow);
+      if (counter > 0) rawPeaks.push(maxInWindow);
 
-      // Pad or trim to exactly PEAK_COUNT
-      while (peaks.length < PEAK_COUNT) peaks.push(0);
-      if (peaks.length > PEAK_COUNT) {
-        // Downsample by averaging
-        const ratio = peaks.length / PEAK_COUNT;
-        const downsampled: number[] = [];
-        for (let i = 0; i < PEAK_COUNT; i++) {
-          const start = Math.floor(i * ratio);
-          const end = Math.floor((i + 1) * ratio);
-          let sum = 0;
-          for (let j = start; j < end && j < peaks.length; j++) sum += peaks[j];
-          downsampled.push(sum / (end - start));
-        }
-        resolve(downsampled);
-      } else {
-        resolve(peaks);
-      }
+      // Resize to exactly PEAK_COUNT
+      const peaks = resizePeaks(rawPeaks, PEAK_COUNT);
+
+      resolve({
+        duration,
+        peaks,
+        sampleRate: 44100,
+        channels: 1,
+      });
     });
   });
 }
 
-function generatePlaceholderPeaks(duration: number): number[] {
-  if (duration <= 0) return new Array(PEAK_COUNT).fill(0);
-  const peaks: number[] = [];
-  for (let i = 0; i < PEAK_COUNT; i++) {
-    const t = i / PEAK_COUNT;
-    // Fake envelope that looks vaguely musical
-    peaks.push(Math.max(0.02, Math.sin(t * Math.PI * 4) * 0.3 + 0.5));
+function resizePeaks(peaks: number[], target: number): number[] {
+  if (peaks.length === target) return peaks;
+  if (peaks.length === 0) return new Array(target).fill(0);
+
+  const result: number[] = [];
+  const ratio = peaks.length / target;
+  for (let i = 0; i < target; i++) {
+    const start = Math.floor(i * ratio);
+    const end = Math.floor((i + 1) * ratio);
+    let sum = 0;
+    let count = 0;
+    for (let j = start; j < end && j < peaks.length; j++) {
+      sum += peaks[j];
+      count++;
+    }
+    result.push(count > 0 ? sum / count : 0);
   }
-  return peaks;
+  return result;
 }
