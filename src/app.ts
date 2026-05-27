@@ -6,7 +6,7 @@ import fs from "fs";
 import express from "express";
 import mp3Router from "./routes/mp3";
 import { generateWaveform } from "./waveform";
-import { AUDIO_EXTENSIONS } from "./dropbox";
+import { AUDIO_EXTENSIONS, TEXT_EXTENSIONS } from "./dropbox";
 
 const app = express();
 
@@ -24,7 +24,7 @@ app.get("/samples", (_req, res) => {
     const dirPath = path.join(process.cwd(), "public", dir);
     try {
       const files = fs.readdirSync(dirPath).filter(f =>
-        AUDIO_EXTENSIONS.some(ext => f.toLowerCase().endsWith(ext))
+        [...AUDIO_EXTENSIONS, ...TEXT_EXTENSIONS].some(ext => f.toLowerCase().endsWith(ext))
       );
       for (const name of files) {
         const stat = fs.statSync(path.join(dirPath, name));

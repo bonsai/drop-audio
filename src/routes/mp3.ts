@@ -2,7 +2,7 @@ import { Router, Request, Response } from "express";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
-import { isDropboxAvailable, listMp3s, downloadMp3, uploadMp3, AUDIO_EXTENSIONS } from "../dropbox";
+import { isDropboxAvailable, listMp3s, downloadMp3, uploadMp3, AUDIO_EXTENSIONS, TEXT_EXTENSIONS } from "../dropbox";
 
 const router = Router();
 const upload = multer({
@@ -89,9 +89,9 @@ router.get("/download/:filename", async (req: Request, res: Response) => {
   }
 });
 
-function isAudioAllowed(name: string): boolean {
+function isAllowedFile(name: string): boolean {
   const lower = name.toLowerCase();
-  return AUDIO_EXTENSIONS.some(ext => lower.endsWith(ext));
+  return [...AUDIO_EXTENSIONS, ...TEXT_EXTENSIONS].some(ext => lower.endsWith(ext));
 }
 
 // POST /mp3/upload — upload an audio file
@@ -117,9 +117,9 @@ router.post(
         return res.status(400).json({ error: "No file provided" });
       }
 
-      if (!isAudioAllowed(req.file.originalname)) {
+      if (!isAllowedFile(req.file.originalname)) {
         return res.status(400).json({
-          error: `Unsupported file type. Allowed: ${AUDIO_EXTENSIONS.join(", ")}`,
+          error: `Unsupported file type. Allowed: ${[...AUDIO_EXTENSIONS, ...TEXT_EXTENSIONS].join(", ")}`,
         });
       }
 
