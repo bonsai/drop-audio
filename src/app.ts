@@ -6,6 +6,7 @@ import fs from "fs";
 import express from "express";
 import mp3Router from "./routes/mp3";
 import { generateWaveform } from "./waveform";
+import { AUDIO_EXTENSIONS } from "./dropbox";
 
 const app = express();
 
@@ -14,26 +15,42 @@ app.use(express.static(path.join(process.cwd(), "public")));
 
 app.use("/mp3", mp3Router);
 
-// Local sample MP3s (for demo without Dropbox)
+// Local audio files (samples + uploads)
 app.get("/samples", (_req, res) => {
-  const samplesDir = path.join(process.cwd(), "public", "samples");
-  try {
-    const files = fs.readdirSync(samplesDir).filter(f => f.endsWith(".mp3"));
-    const samples = files.map(name => {
-      const stat = fs.statSync(path.join(samplesDir, name));
-      return { name, path: `/samples/${name}`, size: stat.size };
-    });
-    res.json({ files: samples });
-  } catch {
-    res.json({ files: [] });
+  const dirs = ["samples", "uploads"];
+  const all: { name: string; path: string; size: number }[] = [];
+
+  for (const dir of dirs) {
+    const dirPath = path.join(process.cwd(), "public", dir);
+    try {
+      const files = fs.readdirSync(dirPath).filter(f =>
+        AUDIO_EXTENSIONS.some(ext => f.toLowerCase().endsWith(ext))
+      );
+      for (const name of files) {
+        const stat = fs.statSync(path.join(dirPath, name));
+        all.push({ name, path: `/${dir}/${name}`, size: stat.size });
+      }
+    } catch {
+      // directory doesn't exist yet
+    }
   }
+
+  res.json({ files: all });
 });
 
-// Waveform data for local samples
+// Waveform data for local audio files
 app.get("/samples/waveform/:filename", async (req, res) => {
   try {
-    const filePath = path.join(process.cwd(), "public", "samples", req.params.filename);
-    if (!fs.existsSync(filePath)) {
+    // Check samples/ first, then uploads/
+    const candidates = [
+      path.join(process.cwd(), "public", "samples", req.params.filename),
+      path.join(process.cwd(), "public", "uploads", req.params.filename),
+    ];
+    let filePath: string | undefined;
+    for (const c of candidates) {
+      if (fs.existsSync(c)) { filePath = c; break; }
+    }
+    if (!filePath) {
       return res.status(404).json({ error: "File not found" });
     }
     const waveform = await generateWaveform(filePath);

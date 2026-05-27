@@ -13,6 +13,6 @@
     }
   ],
   "env": {
-    "MP3_FOLDER": "/mp3"
+    "MP3_FOLDER": "/"
   }
 }

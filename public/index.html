@@ -32,12 +32,16 @@ h1{font-size:1.6rem;margin-bottom:8px;color:#58a6ff}
 .upload-area:hover{border-color:#58a6ff}
 .upload-area.dragover{border-color:#2ea043;background:#132a1a}
 .upload-area input{display:none}
+.format-tag{display:inline-block;font-size:.65rem;padding:1px 6px;border-radius:4px;margin-left:6px;font-weight:600}
+.tag-mp3{background:#1f6feb;color:#fff}
+.tag-wav{background:#8957e5;color:#fff}
+.tag-other{background:#484f58;color:#fff}
 </style>
 </head>
 <body>
 
 <h1>drop-audio</h1>
-<div class="sub">MP3 プレイヤー（Dropbox / ローカルサンプル）</div>
+<div class="sub">Audio Player（Dropbox / ローカル）</div>
 
 <div id="player">
   <div class="file-info" id="nowplaying"></div>
@@ -50,8 +54,8 @@ h1{font-size:1.6rem;margin-bottom:8px;color:#58a6ff}
 
 <div id="filelist"></div>
 <div class="upload-area" id="uploadArea">
-  <p>+ MP3 をアップロード（クリックまたはドラッグ＆ドロップ）</p>
-  <input type="file" id="fileInput" accept=".mp3,audio/mpeg">
+  <p>+ アップロード（mp3 / wav / flac / ogg / m4a / aac など）</p>
+  <input type="file" id="fileInput" accept=".mp3,.wav,.flac,.aac,.ogg,.m4a,.wma,.opus,.aiff,.alac,audio/*">
 </div>
 
 <script type="module">
@@ -69,6 +73,7 @@ const fileInput = document.getElementById('fileInput')
 let ws = null
 let currentFile = null
 
+let AUDIO_EXT = ['mp3','wav','flac','aac','ogg','m4a','wma','opus','aiff','alac']
 function formatSize(bytes) {
   if (bytes < 1024) return bytes + ' B'
   if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB'
@@ -122,7 +127,9 @@ function renderFileList(files) {
     nameSpan.textContent = f.name
     const metaSpan = document.createElement('span')
     metaSpan.className = 'meta'
-    metaSpan.textContent = (f.source === 'local' ? '📁 ' : '☁️ ') + formatSize(f.size)
+    const ext = f.name.split('.').pop().toLowerCase()
+    const tagClass = ext === 'mp3' ? 'tag-mp3' : ext === 'wav' ? 'tag-wav' : 'tag-other'
+    metaSpan.innerHTML = (f.source === 'local' ? '📁 ' : '☁️ ') + formatSize(f.size) + ' <span class="format-tag ' + tagClass + '">' + ext + '</span>'
 
     li.appendChild(nameSpan)
     li.appendChild(metaSpan)
@@ -218,8 +225,9 @@ fileInput.addEventListener('change', () => {
 })
 
 async function uploadFile(file) {
-  if (!file.name.toLowerCase().endsWith('.mp3')) {
-    alert('Only MP3 files are allowed.')
+  const ext = file.name.split('.').pop().toLowerCase()
+  if (!AUDIO_EXT.includes(ext)) {
+    alert('Unsupported file type. Allowed: ' + AUDIO_EXT.join(', '))
     return
   }
   const formData = new FormData()
@@ -228,12 +236,21 @@ async function uploadFile(file) {
     const res = await fetch('/mp3/upload', { method: 'POST', body: formData })
     if (!res.ok) throw new Error(await res.text())
     await loadFileList()
-    // auto-play uploaded file
-    const mp3Res = await fetch('/mp3')
-    if (mp3Res.ok) {
-      const { files } = await mp3Res.json()
-      const uploaded = files.find(f => f.name === file.name)
-      if (uploaded) playFile({ ...uploaded, source: 'dropbox' })
+    // auto-play uploaded file (from either source)
+    const [dropRes, localRes] = await Promise.all([
+      fetch('/mp3'),
+      fetch('/samples'),
+    ])
+    let uploaded = null
+    if (dropRes.ok) {
+      const d = await dropRes.json()
+      uploaded = (d.files || []).find(f => f.name === file.name)
+      if (uploaded) return playFile({ ...uploaded, source: 'dropbox' })
+    }
+    if (localRes.ok) {
+      const d = await localRes.json()
+      uploaded = (d.files || []).find(f => f.name === file.name)
+      if (uploaded) return playFile({ ...uploaded, source: 'local' })
     }
   } catch (err) {
     alert('Upload failed: ' + err.message)

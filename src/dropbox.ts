@@ -1,5 +1,14 @@
-import { Dropbox, DropboxAuth } from "dropbox";
-import fs from "fs";
+import { Dropbox } from "dropbox";
+
+export const AUDIO_EXTENSIONS = [
+  ".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a",
+  ".wma", ".opus", ".aiff", ".alac",
+];
+
+function isAudioFile(name: string): boolean {
+  const lower = name.toLowerCase();
+  return AUDIO_EXTENSIONS.some(ext => lower.endsWith(ext));
+}
 
 let dbx: Dropbox | null = null;
 
@@ -41,7 +50,7 @@ export async function listMp3s(folderPath: string): Promise<Mp3Entry[]> {
       : await client.filesListFolder({ path: folderPath });
 
     for (const entry of response.result.entries) {
-      if (entry[".tag"] === "file" && entry.name.toLowerCase().endsWith(".mp3")) {
+      if (entry[".tag"] === "file" && isAudioFile(entry.name)) {
         entries.push({
           name: entry.name,
           path: entry.path_display ?? entry.path_lower ?? "",
